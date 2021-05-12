@@ -1,0 +1,26 @@
+{
+  "name": "auto_compound",
+  "version": "0.1.0",
+  "description": "Script to automatically claim, swap half, create pair and restake on MasterChef contracts",
+  "main": "auto_compound.ts",
+  "scripts": {
+    "test": "test",
+    "ts-node": "ts-node",
+    "ac": "npm run ts-node auto_compound.ts"
+  },
+  "author": "ndx",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^15.0.2",
+    "ethers": "^5.1.4",
+    "ts-node": "^9.1.1",
+    "tslint": "^6.1.3",
+    "typescript": "^4.2.4",
+    "@uniswap/sdk": "^3.0.3",
+    "@uniswap/v2-periphery": "^1.1.0-beta.0"
+  },
+  "dependencies": {
+    "chalk": "^4.1.1",
+    "@uniswap/v2-core": "^1.0.1"
+  }
+}

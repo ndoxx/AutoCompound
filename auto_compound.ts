@@ -259,7 +259,11 @@ async function main() {
 	console.log(chalk.yellow(`Staking ${ethers.utils.formatEther(LPBalance)} LPs`));
 
 	// Stake whole LP balance in pool
-	tx = await farm.connect(wallet).deposit(pool.pid, LPBalance);
+	tx = await pair.connect(wallet).approve(farm.address, LPBalance); 
+	await wait(provider, tx.hash, `LPToken.approve`);
+
+	// tx = await farm.connect(wallet).deposit(pool.pid, LPBalance); // DNW (farm.connect(wallet).deposit is not a function)
+	tx = await farm.connect(wallet).functions['deposit(uint256,uint256)'](pool.pid, LPBalance);
 	await wait(provider, tx.hash, `farm.deposit`);
 }
 

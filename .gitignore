@@ -1,0 +1,5 @@
+secrets.json
+node_modules/
+abi/*.json
+auto_compound.sublime-workspace
+package-lock.json

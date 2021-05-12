@@ -190,7 +190,8 @@ async function main() {
 	tokenReserve = parseFloat(ethers.utils.formatEther(tokenReserve));
 	const amount = parseFloat(ethers.utils.formatEther(tokensToSwap));
 	const tokenPrice = etherReserve / tokenReserve;
-	const amountOutMin = ethers.utils.parseEther('0'); //ethers.utils.parseEther((amount * tokenPrice * (1 - TOKEN_PRICE_DEVIATION)).toString());
+	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - TOKEN_PRICE_DEVIATION)).toString());
+	// const amountOutMin = ethers.utils.parseEther('0');
 
 	console.log(`${etherSymbol} reserve: ${etherReserve}`);
 	console.log(`${tokenSymbol} reserve: ${tokenReserve}`);
@@ -247,10 +248,13 @@ async function main() {
 		token.address,
 		tokLiquidityAmount, // desired tokens
 		tokLiquidityAmount.mul(9000).div(10000), // min tokens
-		ethLiquidityAmount,
+		ethLiquidityAmount.mul(9000).div(10000), // min eth
 		wallet.address,
 		Math.floor(Date.now() / 1000) + 60 * 10, // deadline
-		{value: ethLiquidityAmount}
+		{
+			value: ethLiquidityAmount,
+			gasLimit: 250000
+		}
 	);
 	await wait(provider, tx.hash, `router.addLiquidityETH`);
 

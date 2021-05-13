@@ -122,12 +122,12 @@ async function main() {
 		SLIPPAGE_TOLERANCE = clamp(pool.slippageTolerance, 0, 1);
 	}
 
-	let poolProfitFraction = 0;
+	let f0 = 0;
 	if(pool.hasOwnProperty('profitFraction')) {
-		poolProfitFraction = clamp(pool.profitFraction, 0, 1);
+		f0 = clamp(pool.profitFraction, 0, 1);
 	}
-	const SWAP_FRACTION = ethers.BigNumber.from(0.5 * (1 + poolProfitFraction) * 10000);
-	const LIQUIDITY_ETHER_FRACTION = ethers.BigNumber.from((1 - poolProfitFraction) * 10000);
+	const SWAP_FRACTION = ethers.BigNumber.from(Math.floor(0.5 * (1 + f0) * 10000));
+	const LIQUIDITY_ETHER_FRACTION = ethers.BigNumber.from(Math.floor((1 - f0) / (1 + f0) * 10000));
 
 	// Connect to network
 	console.log(chalk.yellow(`Connecting to network: ${pool.network}`));

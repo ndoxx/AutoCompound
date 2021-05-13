@@ -1,4 +1,10 @@
 {
+	"behavior": {
+		"tokenReserveFraction": 0.1,
+		"swapSlippageTolerance": 0.01,
+		"gasLimit": 250000,
+		"swapGasPrice": 3.21
+	},
 	"networks": {
 		"fantom": {
 			"url": "https://rpc.ftm.tools/",
@@ -21,7 +27,8 @@
 			"farm": "0x84466a3df84b5008ef4252952e3319f2cae2dbac",
 			"pid": 1,
 			"DEX": "sushiswap",
-			"hasFees": true
+			"hasFees": true,
+			"swapSlippageTolerance": 0.1
 		}
 	]
 }

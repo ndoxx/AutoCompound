@@ -8,8 +8,8 @@ import Pair from '@uniswap/v2-core/build/UniswapV2Pair.json';
 import UniswapV2Factory from '@uniswap/v2-core/build/UniswapV2Factory.json';
 import UniswapV2Router from '@uniswap/v2-periphery/build/UniswapV2Router02.json';
 
-const TOKEN_PRICE_DEVIATION = 0.3;
 const EPSILON = ethers.utils.parseEther('0.0001');
+
 
 async function wait(
 	provider: any,
@@ -104,9 +104,18 @@ async function main() {
 	console.log(chalk.cyanBright.underline.bold("### AUTO-COMPOUND ###"));
 	const config = require("./config.json");
 
+	const SWAP_FRACTION = ethers.BigNumber.from(10000).sub(config.behavior.tokenReserveFraction * 10000);
+	let SLIPPAGE_TOLERANCE = config.behavior.swapSlippageTolerance;
+	const GAS_LIMIT = config.behavior.gasLimit;
+	const SWAP_GAS_PRICE = ethers.BigNumber.from(config.behavior.swapGasPrice * 1e9);
+
 	// TODO: for loop
 	const pool = config.pools[0];
 	console.log(`Pool: ${pool.name}`);
+
+	if(pool.hasOwnProperty('swapSlippageTolerance')) {
+		SLIPPAGE_TOLERANCE = pool.swapSlippageTolerance;
+	}
 
 	// Connect to network
 	console.log(chalk.yellow(`Connecting to network: ${pool.network}`));
@@ -171,7 +180,8 @@ async function main() {
 	);
 
 	// Swap half of token balance for ether
-	const tokensToSwap = claimedTokens.div(2);
+	// const tokensToSwap = claimedTokens.div(2);
+	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(20000);
 	
 	// Get pair reserves and estimate token price
 	let etherReserve, tokenReserve;
@@ -190,7 +200,7 @@ async function main() {
 	tokenReserve = parseFloat(ethers.utils.formatEther(tokenReserve));
 	const amount = parseFloat(ethers.utils.formatEther(tokensToSwap));
 	const tokenPrice = etherReserve / tokenReserve;
-	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - TOKEN_PRICE_DEVIATION)).toString());
+	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - SLIPPAGE_TOLERANCE)).toString());
 	// const amountOutMin = ethers.utils.parseEther('0');
 
 	console.log(`${etherSymbol} reserve: ${etherReserve}`);
@@ -206,7 +216,10 @@ async function main() {
 			[token.address, WETH],
 			wallet.address,
 			Math.floor(Date.now() / 1000) + 100,
-			{gasLimit: 250000}
+			{
+				gasPrice: SWAP_GAS_PRICE,
+				gasLimit: GAS_LIMIT
+			}
 		);
 		await wait(provider, tx.hash, `router.swapExactTokensForETH`);
 	}
@@ -217,7 +230,10 @@ async function main() {
 			[token.address, WETH],
 			wallet.address,
 			Math.floor(Date.now() / 1000) + 100,
-			{gasLimit: 250000}
+			{
+				gasPrice: SWAP_GAS_PRICE,
+				gasLimit: GAS_LIMIT
+			}
 		);
 		await wait(provider, tx.hash, `router.swapExactTokensForETHSupportingFeeOnTransferTokens`);
 	}
@@ -225,9 +241,13 @@ async function main() {
     const afterSwapEtherBalance = await wallet.getBalance();
     const afterSwapTokenBalance = await token.balanceOf(wallet.address);
 
+    if(afterSwapEtherBalance < afterClaimEtherBalance) {
+    	throw new Error(chalk.red('Swap failed'));
+    }
+
 	// Retrieve ether amount
 	const ethLiquidityAmount = afterSwapEtherBalance.sub(afterClaimEtherBalance);
-	const tokLiquidityAmount = tokensToSwap.sub(EPSILON); // We swapped exactly half of reward
+	const tokLiquidityAmount = tokensToSwap.sub(EPSILON); // We swapped exactly half of what we intend to convert to LPs
 
 	console.log(chalk.green(`Got ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol}`));
 
@@ -253,7 +273,7 @@ async function main() {
 		Math.floor(Date.now() / 1000) + 60 * 10, // deadline
 		{
 			value: ethLiquidityAmount,
-			gasLimit: 250000
+			gasLimit: GAS_LIMIT
 		}
 	);
 	await wait(provider, tx.hash, `router.addLiquidityETH`);

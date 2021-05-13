@@ -1,0 +1,19 @@
+{
+	"folders":
+	[
+		{
+			"name": "root",
+			"path": ".",
+			"folder_exclude_patterns": ["*"],
+			"file_exclude_patterns": ["package-lock.json"]
+		},
+		{
+			"name": "scripts",
+			"path": "scripts"
+		},
+		{
+			"name": "config",
+			"path": "config"
+		}
+	]
+}

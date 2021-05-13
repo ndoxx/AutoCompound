@@ -6,7 +6,7 @@
   "scripts": {
     "test": "test",
     "ts-node": "ts-node",
-    "ac": "npm run ts-node auto_compound.ts"
+    "ac": "npm run ts-node scripts/auto-compound/auto-compound.ts"
   },
   "author": "ndx",
   "license": "MIT",

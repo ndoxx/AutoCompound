@@ -1,5 +1,5 @@
-secrets.json
+config/secrets.json
 node_modules/
-abi/*.json
-auto_compound.sublime-workspace
+scripts/auto-compound/abi/*.json
+ethereum-toolbox.sublime-workspace
 package-lock.json

@@ -1,6 +1,5 @@
 {
-	"behavior": {
-		"tokenReserveFraction": 0.05,
+	"global": {
 		"swapSlippageTolerance": 0.01
 	},
 	"networks": {
@@ -25,7 +24,8 @@
 			"pid": 1,
 			"DEX": "sushiswap",
 			"hasFees": true,
-			"swapSlippageTolerance": 0.06
+			"swapSlippageTolerance": 0.06,
+			"profitFraction": 0.05
 		}
 	]
 }

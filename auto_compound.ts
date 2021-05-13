@@ -11,6 +11,13 @@ import UniswapV2Router from '@uniswap/v2-periphery/build/UniswapV2Router02.json'
 const EPSILON = ethers.utils.parseEther('0.0001');
 const GAS_LIMIT = 250000;
 
+function clamp(
+	a: number,
+	min: number,
+	max: number
+) {
+	return Math.max(min, Math.min(a, max));
+}
 
 async function wait(
 	provider: any,
@@ -105,16 +112,22 @@ async function main() {
 	console.log(chalk.cyanBright.underline.bold("### AUTO-COMPOUND ###"));
 	const config = require("./config.json");
 
-	const SWAP_FRACTION = ethers.BigNumber.from(10000).sub(config.behavior.tokenReserveFraction * 10000);
-	let SLIPPAGE_TOLERANCE = config.behavior.swapSlippageTolerance;
+	let SLIPPAGE_TOLERANCE = clamp(config.global.swapSlippageTolerance, 0, 1);
 
 	// TODO: for loop
 	const pool = config.pools[0];
 	console.log(`Pool: ${pool.name}`);
 
 	if(pool.hasOwnProperty('swapSlippageTolerance')) {
-		SLIPPAGE_TOLERANCE = pool.swapSlippageTolerance;
+		SLIPPAGE_TOLERANCE = clamp(pool.swapSlippageTolerance, 0, 1);
 	}
+
+	let poolProfitFraction = 0;
+	if(pool.hasOwnProperty('profitFraction')) {
+		poolProfitFraction = clamp(pool.profitFraction, 0, 1);
+	}
+	const SWAP_FRACTION = ethers.BigNumber.from(0.5 * (1 + poolProfitFraction) * 10000);
+	const LIQUIDITY_ETHER_FRACTION = ethers.BigNumber.from((1 - poolProfitFraction) * 10000);
 
 	// Connect to network
 	console.log(chalk.yellow(`Connecting to network: ${pool.network}`));
@@ -140,18 +153,18 @@ async function main() {
 
 	// Get DEX
 	const DEXInfo = networkInfo.DEX[pool.DEX];
-    const router = new ethers.Contract(DEXInfo.router, UniswapV2Router.abi, provider);
-    const factoryAddress = await router.factory();
+	const router = new ethers.Contract(DEXInfo.router, UniswapV2Router.abi, provider);
+	const factoryAddress = await router.factory();
 	const factory = new ethers.Contract(factoryAddress, UniswapV2Factory.abi, provider);
 
-    const WETH = await router.WETH();
-    const LP = await factory.getPair(token.address, WETH);
-    const pair = new ethers.Contract(LP, Pair.abi, provider);
-    console.log(`W${etherSymbol}: ${WETH}`);
-    console.log(`W${etherSymbol}-${tokenSymbol}_LP: ${LP}`);
+	const WETH = await router.WETH();
+	const LP = await factory.getPair(token.address, WETH);
+	const pair = new ethers.Contract(LP, Pair.abi, provider);
+	console.log(`W${etherSymbol}: ${WETH}`);
+	console.log(`W${etherSymbol}-${tokenSymbol}_LP: ${LP}`);
 
-    const initialEtherBalance = await wallet.getBalance();
-    const initialTokenBalance = await token.balanceOf(wallet.address);
+	const initialEtherBalance = await wallet.getBalance();
+	const initialTokenBalance = await token.balanceOf(wallet.address);
 
 	// Display wallet balance
 	printBalance(
@@ -166,8 +179,8 @@ async function main() {
 	tx = await farm.connect(wallet).withdraw(pool.pid, 0);
 	await wait(provider, tx.hash, "farm.withdraw");
 
-    const afterClaimEtherBalance = await wallet.getBalance();
-    const afterClaimTokenBalance = await token.balanceOf(wallet.address);
+	const afterClaimEtherBalance = await wallet.getBalance();
+	const afterClaimTokenBalance = await token.balanceOf(wallet.address);
 	const claimedTokens = afterClaimTokenBalance.sub(initialTokenBalance);
 
 	console.log(chalk.green(`Received ${ethers.utils.formatEther(claimedTokens)} ${tokenSymbol}`));
@@ -182,7 +195,7 @@ async function main() {
 
 	// Swap half of token balance for ether
 	// const tokensToSwap = claimedTokens.div(2);
-	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(20000);
+	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(10000);
 	
 	// Get pair reserves and estimate token price
 	let etherReserve, tokenReserve;
@@ -242,18 +255,16 @@ async function main() {
 		await wait(provider, tx.hash, `router.swapExactTokensForETHSupportingFeeOnTransferTokens`);
 	}
 
-    const afterSwapEtherBalance = await wallet.getBalance();
-    const afterSwapTokenBalance = await token.balanceOf(wallet.address);
+	const afterSwapEtherBalance = await wallet.getBalance();
+	const afterSwapTokenBalance = await token.balanceOf(wallet.address);
 
-    if(afterSwapEtherBalance < afterClaimEtherBalance) {
-    	throw new Error(chalk.red('Swap failed'));
-    }
+	if(afterSwapEtherBalance < afterClaimEtherBalance) {
+		throw new Error(chalk.red('Swap failed'));
+	}
 
 	// Retrieve ether amount
-	const ethLiquidityAmount = afterSwapEtherBalance.sub(afterClaimEtherBalance);
-	const tokLiquidityAmount = tokensToSwap.sub(EPSILON); // We swapped exactly half of what we intend to convert to LPs
-
-	console.log(chalk.green(`Received ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol}`));
+	const ethReceived = afterSwapEtherBalance.sub(afterClaimEtherBalance);
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(ethReceived)} ${etherSymbol}`));
 
 	printBalance(
 		wallet.address,
@@ -263,12 +274,23 @@ async function main() {
 		tokenSymbol
 	);
 
+	// If afterSwapTokenBalance is null, we got everything out for profit, so there is nothing left to compound
+	if(afterSwapTokenBalance <= EPSILON) {
+		console.log(chalk.yellow("Nothing left to compound"));
+		return;
+	}
+
 	// Add liquidity
 	console.log(chalk.yellow("Adding liquidity"));
 
+	const ethLiquidityAmount = ethReceived.mul(LIQUIDITY_ETHER_FRACTION).div(10000);
+	const tokLiquidityAmount = afterSwapTokenBalance.sub(EPSILON);
+	console.log(`Trying (${ethers.utils.formatEther(tokLiquidityAmount)} ${tokenSymbol}, ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol})`);
+
+	// TMP: 0.9 floor should be replaced by slippage
 	tx = await router.connect(wallet).addLiquidityETH(
 		token.address,
-		tokLiquidityAmount, // desired tokens
+		tokLiquidityAmount, 					 // desired tokens
 		tokLiquidityAmount.mul(9000).div(10000), // min tokens
 		ethLiquidityAmount.mul(9000).div(10000), // min eth
 		wallet.address,
@@ -293,6 +315,18 @@ async function main() {
 	// tx = await farm.connect(wallet).deposit(pool.pid, LPBalance); // DNW (farm.connect(wallet).deposit is not a function)
 	tx = await farm.connect(wallet).functions['deposit(uint256,uint256)'](pool.pid, LPBalance);
 	await wait(provider, tx.hash, `farm.deposit`);
+
+
+	const afterStakeEtherBalance = await wallet.getBalance();
+	const afterStakeTokenBalance = await token.balanceOf(wallet.address);
+
+	printBalance(
+		wallet.address,
+		afterStakeEtherBalance,
+		etherSymbol,
+		afterStakeTokenBalance,
+		tokenSymbol
+	);
 }
 
 main();

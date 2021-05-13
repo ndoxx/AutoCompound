@@ -223,7 +223,7 @@ async function main() {
 	
 	console.log(chalk.yellow(`Swapping ${ethers.utils.formatEther(tokensToSwap)} ${tokenSymbol} for at least ${ethers.utils.formatEther(amountOutMin)} ${etherSymbol}`));
 
-	// Approve ghost: half are spent during swap, half are spent when adding liquidity (ignoring reserve fraction)
+	// Approval: all claimed tokens are spent by router, during swap and then when adding liquidity
 	tx = await token.connect(wallet).approve(router.address, afterClaimTokenBalance); 
 	await wait(provider, tx.hash, `${tokenSymbol}.approve`);
 
@@ -287,14 +287,14 @@ async function main() {
 	const tokLiquidityAmount = afterSwapTokenBalance.sub(EPSILON);
 	console.log(`Trying (${ethers.utils.formatEther(tokLiquidityAmount)} ${tokenSymbol}, ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol})`);
 
-	// TMP: 0.9 floor should be replaced by slippage
+	const SLIPPAGE_FACTOR = ethers.BigNumber.from((1 - SLIPPAGE_TOLERANCE) * 10000);
 	tx = await router.connect(wallet).addLiquidityETH(
 		token.address,
-		tokLiquidityAmount, 					 // desired tokens
-		tokLiquidityAmount.mul(9000).div(10000), // min tokens
-		ethLiquidityAmount.mul(9000).div(10000), // min eth
+		tokLiquidityAmount, 					            // desired tokens
+		tokLiquidityAmount.mul(SLIPPAGE_FACTOR).div(10000), // min tokens
+		ethLiquidityAmount.mul(SLIPPAGE_FACTOR).div(10000), // min eth
 		wallet.address,
-		Math.floor(Date.now() / 1000) + 60 * 10, // deadline
+		Math.floor(Date.now() / 1000) + 100,                // deadline
 		{
 			value: ethLiquidityAmount,
 			gasLimit: GAS_LIMIT

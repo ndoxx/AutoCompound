@@ -112,14 +112,14 @@ async function main() {
 	console.log(chalk.cyanBright.underline.bold("### AUTO-COMPOUND ###"));
 	const config = require("./config.json");
 
-	let SLIPPAGE_TOLERANCE = clamp(config.global.swapSlippageTolerance, 0, 1);
+	let SLIPPAGE_TOLERANCE = clamp(config.global.slippageTolerance, 0, 1);
 
 	// TODO: for loop
 	const pool = config.pools[0];
 	console.log(`Pool: ${pool.name}`);
 
-	if(pool.hasOwnProperty('swapSlippageTolerance')) {
-		SLIPPAGE_TOLERANCE = clamp(pool.swapSlippageTolerance, 0, 1);
+	if(pool.hasOwnProperty('slippageTolerance')) {
+		SLIPPAGE_TOLERANCE = clamp(pool.slippageTolerance, 0, 1);
 	}
 
 	let poolProfitFraction = 0;

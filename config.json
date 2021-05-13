@@ -1,6 +1,6 @@
 {
 	"global": {
-		"swapSlippageTolerance": 0.01
+		"slippageTolerance": 0.01
 	},
 	"networks": {
 		"fantom": {
@@ -24,7 +24,7 @@
 			"pid": 1,
 			"DEX": "sushiswap",
 			"hasFees": true,
-			"swapSlippageTolerance": 0.06,
+			"slippageTolerance": 0.06,
 			"profitFraction": 0.05
 		}
 	]

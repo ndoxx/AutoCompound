@@ -9,6 +9,7 @@ import UniswapV2Factory from '@uniswap/v2-core/build/UniswapV2Factory.json';
 import UniswapV2Router from '@uniswap/v2-periphery/build/UniswapV2Router02.json';
 
 const EPSILON = ethers.utils.parseEther('0.0001');
+const GAS_LIMIT = 250000;
 
 
 async function wait(
@@ -106,8 +107,6 @@ async function main() {
 
 	const SWAP_FRACTION = ethers.BigNumber.from(10000).sub(config.behavior.tokenReserveFraction * 10000);
 	let SLIPPAGE_TOLERANCE = config.behavior.swapSlippageTolerance;
-	const GAS_LIMIT = config.behavior.gasLimit;
-	const SWAP_GAS_PRICE = ethers.BigNumber.from(config.behavior.swapGasPrice * 1e9);
 
 	// TODO: for loop
 	const pool = config.pools[0];
@@ -140,9 +139,11 @@ async function main() {
 	const tokenSymbol = await token.symbol();
 
 	// Get DEX
-	const DEXInfo = config.DEX[pool.DEX];
-    const factory = new ethers.Contract(DEXInfo.factory, UniswapV2Factory.abi, provider);
+	const DEXInfo = networkInfo.DEX[pool.DEX];
     const router = new ethers.Contract(DEXInfo.router, UniswapV2Router.abi, provider);
+    const factoryAddress = await router.factory();
+	const factory = new ethers.Contract(factoryAddress, UniswapV2Factory.abi, provider);
+
     const WETH = await router.WETH();
     const LP = await factory.getPair(token.address, WETH);
     const pair = new ethers.Contract(LP, Pair.abi, provider);
@@ -169,7 +170,7 @@ async function main() {
     const afterClaimTokenBalance = await token.balanceOf(wallet.address);
 	const claimedTokens = afterClaimTokenBalance.sub(initialTokenBalance);
 
-	console.log(chalk.green(`Claimed ${ethers.utils.formatEther(claimedTokens)} ${tokenSymbol}`));
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(claimedTokens)} ${tokenSymbol}`));
 
 	printBalance(
 		wallet.address,
@@ -209,6 +210,11 @@ async function main() {
 	
 	console.log(chalk.yellow(`Swapping ${ethers.utils.formatEther(tokensToSwap)} ${tokenSymbol} for at least ${ethers.utils.formatEther(amountOutMin)} ${etherSymbol}`));
 
+	// Approve ghost: half are spent during swap, half are spent when adding liquidity (ignoring reserve fraction)
+	tx = await token.connect(wallet).approve(router.address, afterClaimTokenBalance); 
+	await wait(provider, tx.hash, `${tokenSymbol}.approve`);
+
+	// Swap
 	if(!pool.hasFees) {
 		tx = await router.connect(wallet).swapExactTokensForETH(
 			tokensToSwap,
@@ -217,7 +223,6 @@ async function main() {
 			wallet.address,
 			Math.floor(Date.now() / 1000) + 100,
 			{
-				gasPrice: SWAP_GAS_PRICE,
 				gasLimit: GAS_LIMIT
 			}
 		);
@@ -231,7 +236,6 @@ async function main() {
 			wallet.address,
 			Math.floor(Date.now() / 1000) + 100,
 			{
-				gasPrice: SWAP_GAS_PRICE,
 				gasLimit: GAS_LIMIT
 			}
 		);
@@ -249,7 +253,7 @@ async function main() {
 	const ethLiquidityAmount = afterSwapEtherBalance.sub(afterClaimEtherBalance);
 	const tokLiquidityAmount = tokensToSwap.sub(EPSILON); // We swapped exactly half of what we intend to convert to LPs
 
-	console.log(chalk.green(`Got ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol}`));
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol}`));
 
 	printBalance(
 		wallet.address,
@@ -261,8 +265,6 @@ async function main() {
 
 	// Add liquidity
 	console.log(chalk.yellow("Adding liquidity"));
-	tx = await token.connect(wallet).approve(router.address, tokLiquidityAmount); 
-	await wait(provider, tx.hash, `${tokenSymbol}.approve`);
 
 	tx = await router.connect(wallet).addLiquidityETH(
 		token.address,
@@ -280,7 +282,9 @@ async function main() {
 
 	// Get LP balance
 	const LPBalance = await pair.balanceOf(wallet.address);
-	console.log(chalk.yellow(`Staking ${ethers.utils.formatEther(LPBalance)} LPs`));
+
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(LPBalance)} ${tokenSymbol}-${etherSymbol}_LP`));
+	console.log(chalk.yellow(`Staking all LPs`));
 
 	// Stake whole LP balance in pool
 	tx = await pair.connect(wallet).approve(farm.address, LPBalance); 

@@ -60,7 +60,7 @@ async function main() {
 	let SLIPPAGE_TOLERANCE = clamp(config.global.slippageTolerance, 0, 1);
 
 	// TODO: parameterize this
-	const pool = config.pools[1];
+	const pool = config.pools[0];
 
 
 	console.log(`Pool: ${pool.name}`);

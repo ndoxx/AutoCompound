@@ -14,6 +14,10 @@
 		{
 			"name": "config",
 			"path": "config"
+		},
+		{
+			"name": "data",
+			"path": "data"
 		}
 	]
 }

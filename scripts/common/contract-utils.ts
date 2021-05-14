@@ -63,7 +63,7 @@ export async function fetchContractByAddress(
 	}
 
 	// Check in abi folder if contract ABI is cached
-	const filePath = path.join(__dirname, "abi", `${address}.abi.json`);
+	const filePath = path.join(__dirname, "../../data/abi", `${address}.abi.json`);
 	let rawdata: string = "";
 	try {
 		if(fs.existsSync(filePath)) {

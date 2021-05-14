@@ -8,6 +8,8 @@ import Pair from '@uniswap/v2-core/build/UniswapV2Pair.json';
 import UniswapV2Factory from '@uniswap/v2-core/build/UniswapV2Factory.json';
 import UniswapV2Router from '@uniswap/v2-periphery/build/UniswapV2Router02.json';
 
+import { fetchContractByAddress } from '../common/contract-utils'
+
 const EPSILON = ethers.utils.parseEther('0.0001');
 const GAS_LIMIT = 250000;
 
@@ -33,38 +35,6 @@ async function wait(
 	await provider.waitForTransaction(hash, confirmation);
 }
 
-async function getContractABI(
-	address: string,
-	scanAPI: string,
-	apiKey: string
-): Promise<string> {
-	const ABI: string = await new Promise((resolve, reject) => {
-		https.get(`${scanAPI}api?module=contract&action=getabi&address=${address}&apikey=${apiKey}`, (resp: any) => {
-			let data = '';
-
-			resp.on('data', (chunk: any) => {
-				data += chunk;
-			});
-
-			resp.on('end', () => {
-				const contractABI = JSON.parse(data).result;
-				if (contractABI !== ''){
-					resolve(contractABI);
-				}
-			});
-		}).on("error", (err: any) => {
-			console.log("Error: " + err.message);
-			reject(err);
-		});
-	});
-
-	if(ABI !== 'Contract source code not verified') {
-		return ABI;
-	}
-
-	throw new Error('Contract source code not verified');
-}
-
 function printBalance(
 	address: string,
 	etherBalance: ethers.BigNumber,
@@ -77,46 +47,22 @@ function printBalance(
 	console.log(`    ${ethers.utils.formatEther(tokenBalance)} ${tokenSymbol}`);
 }
 
-async function fetchContract(
-	address: string,
-	scanAPI: string,
-	apiKey: string,
-	provider: any
-): Promise<ethers.Contract> {
-	// Check in abi folder if contract ABI is cached
-	const filePath = path.join(__dirname, "abi", `${address}.abi.json`);
-	let rawdata: string = "";
-	try {
-		if(fs.existsSync(filePath)) {
-			console.log(chalk.yellow(`Fetching ABI for contract at ${address} (USING CACHE)`));
-			rawdata = fs.readFileSync(filePath).toString();
-		}
-		else {
-			console.log(chalk.yellow(`Fetching ABI for contract at ${address}`));
-			// Get contract ABI as string using xxxscan API
-			rawdata = await getContractABI(address, scanAPI, apiKey);
-			// Save to JSON file for next time
-			fs.writeFileSync(filePath, rawdata);
-		}
-	} catch(err) {
-		console.error(err)
-	}
 
-	const ABI = JSON.parse(rawdata);
-	return new ethers.Contract(address, ABI, provider);
-}
 
 async function main() {
 	let tx;
 
 	console.log(chalk.cyanBright.underline.bold("### AUTO-COMPOUND ###"));
 	const config = require(path.join(__dirname, "../../config/auto-compound.json"));
+	const configCommon = require(path.join(__dirname, "../../config/common.json"));
 	const secrets = require(path.join(__dirname, "../../config/secrets.json"));
 
 	let SLIPPAGE_TOLERANCE = clamp(config.global.slippageTolerance, 0, 1);
 
-	// TODO: for loop
-	const pool = config.pools[0];
+	// TODO: parameterize this
+	const pool = config.pools[1];
+
+
 	console.log(`Pool: ${pool.name}`);
 
 	if(pool.hasOwnProperty('slippageTolerance')) {
@@ -132,7 +78,7 @@ async function main() {
 
 	// Connect to network
 	console.log(chalk.yellow(`Connecting to network: ${pool.network}`));
-	const networkInfo = config.networks[pool.network];
+	const networkInfo = configCommon.networks[pool.network];
 	const provider = new ethers.providers.JsonRpcProvider(networkInfo.url);
 	const network = await provider.getNetwork();
 	// Check chainId
@@ -141,13 +87,13 @@ async function main() {
 	}
 
 	// Connect wallet
-	const privateKey = secrets.privateKey;
+	const privateKey = secrets[pool.network].privateKey;
 	const wallet = new ethers.Wallet(privateKey, provider);
 
 	// Get token & farm contracts
-	const apiKey = secrets.scan[pool.network].apiKey;
-	const token = await fetchContract(pool.token, networkInfo.scanAPI, apiKey, provider);
-	const farm = await fetchContract(pool.farm, networkInfo.scanAPI, apiKey, provider);
+	const apiKey = secrets[pool.network].scanAPIKey;
+	const token = await fetchContractByAddress(pool.token, networkInfo, apiKey, provider);
+	const farm = await fetchContractByAddress(pool.farm, networkInfo, apiKey, provider);
 
 	const etherSymbol = networkInfo.symbol;
 	const tokenSymbol = await token.symbol();
@@ -177,7 +123,7 @@ async function main() {
 	);
 
 	console.log(chalk.yellow("Harvesting rewards"));
-	tx = await farm.connect(wallet).withdraw(pool.pid, 0);
+	tx = await farm.connect(wallet).withdraw(pool.pid, 0, { gasLimit: GAS_LIMIT });
 	await wait(provider, tx.hash, "farm.withdraw");
 
 	const afterClaimEtherBalance = await wallet.getBalance();

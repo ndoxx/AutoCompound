@@ -42,9 +42,13 @@ function printBalance(
 	tokenBalance: ethers.BigNumber,
 	tokenSymbol: string
 ) {
-	console.log(`Wallet ${address} has:`);
-	console.log(`    ${ethers.utils.formatEther(etherBalance)} ${etherSymbol}`);
-	console.log(`    ${ethers.utils.formatEther(tokenBalance)} ${tokenSymbol}`);
+	console.log(`Wallet ${address} balance:`);
+
+	const balanceInfo = [
+		[etherSymbol, ethers.utils.formatEther(etherBalance)],
+		[tokenSymbol, ethers.utils.formatEther(tokenBalance)]
+	];
+	console.table(balanceInfo);
 }
 
 
@@ -52,8 +56,8 @@ function printBalance(
 async function main() {
 	let tx;
 
-	console.log(chalk.cyanBright.underline.bold("### AUTO-COMPOUND ###"));
-	const config = require(path.join(__dirname, "../../config/auto-compound.json"));
+	console.log(chalk.cyanBright.underline.bold("### YUMMY::AUTO-COMPOUND ###"));
+	const config = require(path.join(__dirname, "../../config/yummy.json"));
 	const configCommon = require(path.join(__dirname, "../../config/common.json"));
 	const secrets = require(path.join(__dirname, "../../config/secrets.json"));
 
@@ -107,13 +111,15 @@ async function main() {
 	const WETH = await router.WETH();
 	const LP = await factory.getPair(token.address, WETH);
 	const pair = new ethers.Contract(LP, Pair.abi, provider);
-	console.log(`W${etherSymbol}: ${WETH}`);
-	console.log(`W${etherSymbol}-${tokenSymbol}_LP: ${LP}`);
+	const DEXLPSymbol = await pair.symbol();
+	const WETHSymbol = `W${etherSymbol}`;
+	const LPSymbol = `[${WETHSymbol}]-[${tokenSymbol}]_${DEXLPSymbol}`;
 
+
+	// Display wallet balance
 	const initialEtherBalance = await wallet.getBalance();
 	const initialTokenBalance = await token.balanceOf(wallet.address);
 
-	// Display wallet balance
 	printBalance(
 		wallet.address,
 		initialEtherBalance,
@@ -122,28 +128,8 @@ async function main() {
 		tokenSymbol
 	);
 
-	console.log(chalk.yellow("Harvesting rewards"));
-	tx = await farm.connect(wallet).withdraw(pool.pid, 0, { gasLimit: GAS_LIMIT });
-	await wait(provider, tx.hash, "farm.withdraw");
 
-	const afterClaimEtherBalance = await wallet.getBalance();
-	const afterClaimTokenBalance = await token.balanceOf(wallet.address);
-	const claimedTokens = afterClaimTokenBalance.sub(initialTokenBalance);
-
-	console.log(chalk.green(`Received ${ethers.utils.formatEther(claimedTokens)} ${tokenSymbol}`));
-
-	printBalance(
-		wallet.address,
-		afterClaimEtherBalance,
-		etherSymbol,
-		afterClaimTokenBalance,
-		tokenSymbol
-	);
-
-	// Swap half of token balance for ether
-	// const tokensToSwap = claimedTokens.div(2);
-	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(10000);
-	
+	// ### INFO ###
 	// Get pair reserves and estimate token price
 	let etherReserve, tokenReserve;
 	const reserves = await pair.getReserves();
@@ -159,16 +145,38 @@ async function main() {
 
 	etherReserve = parseFloat(ethers.utils.formatEther(etherReserve));
 	tokenReserve = parseFloat(ethers.utils.formatEther(tokenReserve));
-	const amount = parseFloat(ethers.utils.formatEther(tokensToSwap));
 	const tokenPrice = etherReserve / tokenReserve;
-	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - SLIPPAGE_TOLERANCE)).toString());
-	// const amountOutMin = ethers.utils.parseEther('0');
 
-	console.log(`${etherSymbol} reserve: ${etherReserve}`);
-	console.log(`${tokenSymbol} reserve: ${tokenReserve}`);
-	console.log(`${tokenSymbol} price:   ${tokenPrice} ${etherSymbol}`);
+	const displayInfo = [
+		[`${WETHSymbol} address`, WETH],
+		[`${LPSymbol} address`, LP],
+		[`${etherSymbol} reserve`, etherReserve],
+		[`${tokenSymbol} reserve`, tokenReserve],
+		[`${tokenSymbol} price`, `${tokenPrice} ${etherSymbol}`]
+	];
+	console.table(displayInfo);
+
+
+	// ### HARVEST ###
+	console.log(chalk.yellow("* Harvesting rewards"));
+	tx = await farm.connect(wallet).withdraw(pool.pid, 0, { gasLimit: GAS_LIMIT });
+	await wait(provider, tx.hash, "farm.withdraw");
+
+	const afterClaimEtherBalance = await wallet.getBalance();
+	const afterClaimTokenBalance = await token.balanceOf(wallet.address);
+	const claimedTokens = afterClaimTokenBalance.sub(initialTokenBalance);
+
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(claimedTokens)} ${tokenSymbol}`));
+
+
+	// ### SWAP ###
+	// Swap half of token balance for ether
+	console.log(chalk.yellow(`* Swapping tokens`));
+	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(10000);
+	const amount = parseFloat(ethers.utils.formatEther(tokensToSwap));
+	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - SLIPPAGE_TOLERANCE)).toString());
 	
-	console.log(chalk.yellow(`Swapping ${ethers.utils.formatEther(tokensToSwap)} ${tokenSymbol} for at least ${ethers.utils.formatEther(amountOutMin)} ${etherSymbol}`));
+	console.log(`Swapping ${ethers.utils.formatEther(tokensToSwap)} ${tokenSymbol} for at least ${ethers.utils.formatEther(amountOutMin)} ${etherSymbol}`);
 
 	// Approval: all claimed tokens are spent by router, during swap and then when adding liquidity
 	tx = await token.connect(wallet).approve(router.address, afterClaimTokenBalance); 
@@ -213,13 +221,6 @@ async function main() {
 	const ethReceived = afterSwapEtherBalance.sub(afterClaimEtherBalance);
 	console.log(chalk.green(`Received ${ethers.utils.formatEther(ethReceived)} ${etherSymbol}`));
 
-	printBalance(
-		wallet.address,
-		afterSwapEtherBalance,
-		etherSymbol,
-		afterSwapTokenBalance,
-		tokenSymbol
-	);
 
 	// If afterSwapTokenBalance is null, we got everything out for profit, so there is nothing left to compound
 	if(afterSwapTokenBalance <= EPSILON) {
@@ -227,12 +228,12 @@ async function main() {
 		return;
 	}
 
-	// Add liquidity
-	console.log(chalk.yellow("Adding liquidity"));
+	// ### LIQUIDITY ###
+	console.log(chalk.yellow("* Adding liquidity"));
 
 	const ethLiquidityAmount = ethReceived.mul(LIQUIDITY_ETHER_FRACTION).div(10000);
 	const tokLiquidityAmount = afterSwapTokenBalance.sub(EPSILON);
-	console.log(`Trying (${ethers.utils.formatEther(tokLiquidityAmount)} ${tokenSymbol}, ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol})`);
+	console.log(`Composition: (${ethers.utils.formatEther(tokLiquidityAmount)} ${tokenSymbol}, ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol})`);
 
 	const SLIPPAGE_FACTOR = ethers.BigNumber.from((1 - SLIPPAGE_TOLERANCE) * 10000);
 	tx = await router.connect(wallet).addLiquidityETH(
@@ -252,8 +253,11 @@ async function main() {
 	// Get LP balance
 	const LPBalance = await pair.balanceOf(wallet.address);
 
-	console.log(chalk.green(`Received ${ethers.utils.formatEther(LPBalance)} ${tokenSymbol}-${etherSymbol}_LP`));
-	console.log(chalk.yellow(`Staking all LPs`));
+	console.log(chalk.green(`Received ${ethers.utils.formatEther(LPBalance)} ${LPSymbol}`));
+	
+
+	// ### RESTAKE ###
+	console.log(chalk.yellow(`* Staking all LPs`));
 
 	// Stake whole LP balance in pool
 	tx = await pair.connect(wallet).approve(farm.address, LPBalance); 

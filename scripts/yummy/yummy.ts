@@ -4,36 +4,14 @@ import { ethers } from "ethers";
 import * as fs from 'fs';
 import * as path from 'path';
 
-import Pair from '@uniswap/v2-core/build/UniswapV2Pair.json';
-import UniswapV2Factory from '@uniswap/v2-core/build/UniswapV2Factory.json';
-import UniswapV2Router from '@uniswap/v2-periphery/build/UniswapV2Router02.json';
-
+import * as math from '../common/math-utils'
+import { Uniswap } from '../common/uniswap-utils'
 import { fetchContractByAddress } from '../common/contract-utils'
+import { wait } from '../common/ether-utils'
 
 const EPSILON = ethers.utils.parseEther('0.0001');
 const GAS_LIMIT = 250000;
 
-function clamp(
-	a: number,
-	min: number,
-	max: number
-) {
-	return Math.max(min, Math.min(a, max));
-}
-
-async function wait(
-	provider: any,
-	hash: string,
-	desc?: string,
-	confirmation: number = 1
-): Promise<void> {
-	if (desc) {
-		console.log(`> Waiting tx ${hash}\n    action = ${desc}`);
-	} else {
-		console.log(`> Waiting tx ${hash}`);
-	}
-	await provider.waitForTransaction(hash, confirmation);
-}
 
 function printBalance(
 	address: string,
@@ -51,8 +29,6 @@ function printBalance(
 	console.table(balanceInfo);
 }
 
-
-
 async function main() {
 	let tx;
 
@@ -61,21 +37,21 @@ async function main() {
 	const configCommon = require(path.join(__dirname, "../../config/common.json"));
 	const secrets = require(path.join(__dirname, "../../config/secrets.json"));
 
-	let SLIPPAGE_TOLERANCE = clamp(config.global.slippageTolerance, 0, 1);
+	let SLIPPAGE_TOLERANCE = math.clamp(config.global.slippageTolerance, 0, 1);
 
 	// TODO: parameterize this
-	const pool = config.pools[0];
+	const pool = config.pools[1];
 
 
 	console.log(`Pool: ${pool.name}`);
 
 	if(pool.hasOwnProperty('slippageTolerance')) {
-		SLIPPAGE_TOLERANCE = clamp(pool.slippageTolerance, 0, 1);
+		SLIPPAGE_TOLERANCE = math.clamp(pool.slippageTolerance, 0, 1);
 	}
 
 	let f0 = 0;
 	if(pool.hasOwnProperty('profitFraction')) {
-		f0 = clamp(pool.profitFraction, 0, 1);
+		f0 = math.clamp(pool.profitFraction, 0, 1);
 	}
 	const SWAP_FRACTION = ethers.BigNumber.from(Math.floor(0.5 * (1 + f0) * 10000));
 	const LIQUIDITY_ETHER_FRACTION = ethers.BigNumber.from(Math.floor((1 - f0) / (1 + f0) * 10000));
@@ -104,17 +80,13 @@ async function main() {
 
 	// Get DEX
 	const DEXInfo = networkInfo.DEX[pool.DEX];
-	const router = new ethers.Contract(DEXInfo.router, UniswapV2Router.abi, provider);
-	const factoryAddress = await router.factory();
-	const factory = new ethers.Contract(factoryAddress, UniswapV2Factory.abi, provider);
+	const dex = new Uniswap(provider, DEXInfo.router);
+	await dex.Ready;
+	dex.setSlippage(SLIPPAGE_TOLERANCE);
 
-	const WETH = await router.WETH();
-	const LP = await factory.getPair(token.address, WETH);
-	const pair = new ethers.Contract(LP, Pair.abi, provider);
-	const DEXLPSymbol = await pair.symbol();
-	const WETHSymbol = `W${etherSymbol}`;
-	const LPSymbol = `[${WETHSymbol}]-[${tokenSymbol}]_${DEXLPSymbol}`;
 
+	// ### INFO ###
+	await dex.printPoolInfo(token.address, dex.WETH);
 
 	// Display wallet balance
 	const initialEtherBalance = await wallet.getBalance();
@@ -127,34 +99,6 @@ async function main() {
 		initialTokenBalance,
 		tokenSymbol
 	);
-
-
-	// ### INFO ###
-	// Get pair reserves and estimate token price
-	let etherReserve, tokenReserve;
-	const reserves = await pair.getReserves();
-	const token0 = await pair.token0();
-	if(token0 == WETH) {
-		etherReserve = reserves[0];
-		tokenReserve = reserves[1];
-	}
-	else {
-		etherReserve = reserves[1];
-		tokenReserve = reserves[0];
-	}
-
-	etherReserve = parseFloat(ethers.utils.formatEther(etherReserve));
-	tokenReserve = parseFloat(ethers.utils.formatEther(tokenReserve));
-	const tokenPrice = etherReserve / tokenReserve;
-
-	const displayInfo = [
-		[`${WETHSymbol} address`, WETH],
-		[`${LPSymbol} address`, LP],
-		[`${etherSymbol} reserve`, etherReserve],
-		[`${tokenSymbol} reserve`, tokenReserve],
-		[`${tokenSymbol} price`, `${tokenPrice} ${etherSymbol}`]
-	];
-	console.table(displayInfo);
 
 
 	// ### HARVEST ###
@@ -173,42 +117,18 @@ async function main() {
 	// Swap half of token balance for ether
 	console.log(chalk.yellow(`* Swapping tokens`));
 	const tokensToSwap = afterClaimTokenBalance.mul(SWAP_FRACTION).div(10000);
-	const amount = parseFloat(ethers.utils.formatEther(tokensToSwap));
-	const amountOutMin = ethers.utils.parseEther((amount * tokenPrice * (1 - SLIPPAGE_TOLERANCE)).toString());
 	
-	console.log(`Swapping ${ethers.utils.formatEther(tokensToSwap)} ${tokenSymbol} for at least ${ethers.utils.formatEther(amountOutMin)} ${etherSymbol}`);
-
 	// Approval: all claimed tokens are spent by router, during swap and then when adding liquidity
-	tx = await token.connect(wallet).approve(router.address, afterClaimTokenBalance); 
+	tx = await token.connect(wallet).approve(dex.router.address, afterClaimTokenBalance); 
 	await wait(provider, tx.hash, `${tokenSymbol}.approve`);
 
 	// Swap
-	if(!pool.hasFees) {
-		tx = await router.connect(wallet).swapExactTokensForETH(
-			tokensToSwap,
-			amountOutMin,
-			[token.address, WETH],
-			wallet.address,
-			Math.floor(Date.now() / 1000) + 100,
-			{
-				gasLimit: GAS_LIMIT
-			}
-		);
-		await wait(provider, tx.hash, `router.swapExactTokensForETH`);
-	}
-	else {
-		tx = await router.connect(wallet).swapExactTokensForETHSupportingFeeOnTransferTokens(
-			tokensToSwap,
-			amountOutMin,
-			[token.address, WETH],
-			wallet.address,
-			Math.floor(Date.now() / 1000) + 100,
-			{
-				gasLimit: GAS_LIMIT
-			}
-		);
-		await wait(provider, tx.hash, `router.swapExactTokensForETHSupportingFeeOnTransferTokens`);
-	}
+	await dex.sellToken(
+		token,
+		tokensToSwap,
+		wallet,
+		pool.hasFees
+	);
 
 	const afterSwapEtherBalance = await wallet.getBalance();
 	const afterSwapTokenBalance = await token.balanceOf(wallet.address);
@@ -225,6 +145,15 @@ async function main() {
 	// If afterSwapTokenBalance is null, we got everything out for profit, so there is nothing left to compound
 	if(afterSwapTokenBalance <= EPSILON) {
 		console.log(chalk.yellow("Nothing left to compound"));
+
+		printBalance(
+			wallet.address,
+			await wallet.getBalance(),
+			etherSymbol,
+			await token.balanceOf(wallet.address),
+			tokenSymbol
+		);
+
 		return;
 	}
 
@@ -233,38 +162,25 @@ async function main() {
 
 	const ethLiquidityAmount = ethReceived.mul(LIQUIDITY_ETHER_FRACTION).div(10000);
 	const tokLiquidityAmount = afterSwapTokenBalance.sub(EPSILON);
-	console.log(`Composition: (${ethers.utils.formatEther(tokLiquidityAmount)} ${tokenSymbol}, ${ethers.utils.formatEther(ethLiquidityAmount)} ${etherSymbol})`);
 
-	const SLIPPAGE_FACTOR = ethers.BigNumber.from((1 - SLIPPAGE_TOLERANCE) * 10000);
-	tx = await router.connect(wallet).addLiquidityETH(
-		token.address,
-		tokLiquidityAmount, 					            // desired tokens
-		tokLiquidityAmount.mul(SLIPPAGE_FACTOR).div(10000), // min tokens
-		ethLiquidityAmount.mul(SLIPPAGE_FACTOR).div(10000), // min eth
-		wallet.address,
-		Math.floor(Date.now() / 1000) + 100,                // deadline
-		{
-			value: ethLiquidityAmount,
-			gasLimit: GAS_LIMIT
-		}
+	const LPAmount = await dex.addLiquidity(
+		token,
+		tokLiquidityAmount,
+		ethLiquidityAmount,
+		wallet
 	);
-	await wait(provider, tx.hash, `router.addLiquidityETH`);
-
-	// Get LP balance
-	const LPBalance = await pair.balanceOf(wallet.address);
-
-	console.log(chalk.green(`Received ${ethers.utils.formatEther(LPBalance)} ${LPSymbol}`));
 	
 
 	// ### RESTAKE ###
 	console.log(chalk.yellow(`* Staking all LPs`));
 
 	// Stake whole LP balance in pool
-	tx = await pair.connect(wallet).approve(farm.address, LPBalance); 
+	const pair = await dex.getPair(token.address, dex.WETH);
+	tx = await pair.connect(wallet).approve(farm.address, LPAmount); 
 	await wait(provider, tx.hash, `LPToken.approve`);
 
-	// tx = await farm.connect(wallet).deposit(pool.pid, LPBalance); // DNW (farm.connect(wallet).deposit is not a function)
-	tx = await farm.connect(wallet).functions['deposit(uint256,uint256)'](pool.pid, LPBalance);
+	// tx = await farm.connect(wallet).deposit(pool.pid, LPAmount); // DNW (farm.connect(wallet).deposit is not a function)
+	tx = await farm.connect(wallet).functions['deposit(uint256,uint256)'](pool.pid, LPAmount);
 	await wait(provider, tx.hash, `farm.deposit`);
 
 
@@ -280,4 +196,9 @@ async function main() {
 	);
 }
 
-main();
+main()
+	.then(() => process.exit(0))
+	.catch((error) => {
+		console.error(error);
+		process.exit(1);
+	});

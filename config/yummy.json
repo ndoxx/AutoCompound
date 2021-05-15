@@ -12,7 +12,7 @@
 			"DEX": "sushiswap",
 			"hasFees": true,
 			"slippageTolerance": 0.06,
-			"profitFraction": 0.05
+			"profitFraction": 0.9
 		},
 		{
 			"name": "TEST",
@@ -23,7 +23,7 @@
 			"DEX": "uniswap",
 			"hasFees": false,
 			"slippageTolerance": 0.05,
-			"profitFraction": 0.05
+			"profitFraction": 0.1
 		}
 	]
 }
